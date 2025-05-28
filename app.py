@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, send_file
+from flask import Flask, render_template, request, send_file, redirect, session, flash
 import sys
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
@@ -18,9 +18,46 @@ from queue import Queue
 import os
 import queue
 import logging
+import smtplib
+import ssl
+from email.mime.text import MIMEText
+
 no_result_dates = set()
 
 app = Flask(__name__)
+app.secret_key = 'gdhetsfgckjfjaqw'
+app.config['SESSION_PERMANENT'] = False
+otp_store = {}
+
+
+def generate_otp():
+    return str(random.randint(100000, 999999))
+
+
+def send_otp_email(email, otp):
+    sender_email = "deepvasoya87@gmail.com"
+    password = "deljjdiqtyimjuwt"
+    smtp_server = "smtp.gmail.com"
+    port = 587
+
+    message = MIMEText(f"Your OTP for Kayak Scraper is: {otp}")
+    message["Subject"] = "Your OTP Code"
+    message["From"] = sender_email
+    message["To"] = email
+
+    try:
+        context = ssl.create_default_context()
+        with smtplib.SMTP(smtp_server, port) as server:
+            server.starttls(context=context)
+            server.login(sender_email, password)
+            server.sendmail(sender_email, email, message.as_string())
+        return True
+    except Exception as e:
+        print("Email error:", str(e))
+        return False
+
+
+latest_output_file: dict = {"filename": None}
 app.config['UPLOAD_FOLDER'] = '.'
 
 logging.basicConfig(
@@ -70,6 +107,14 @@ def setup_driver():
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.131 Safari/537.36"
     ]
     options.add_argument(f"user-agent={random.choice(user_agents)}")
+    options.add_argument("--disable-images")
+    options.add_argument("--blink-settings=imagesEnabled=false")
+    options.add_argument("--disable-popup-blocking")
+    prefs = {
+        "profile.default_content_setting_values.popups": 2,
+        "profile.default_content_setting_values.notifications": 2
+    }
+    options.add_experimental_option("prefs", prefs)
     # options.add_argument(f"--window-size={random.randint(1000, 1400)},{random.randint(800, 1200)}")
 
     try:
@@ -79,7 +124,7 @@ def setup_driver():
             use_subprocess=True
         )
 
-        driver.set_window_size(900, 450)
+        driver.set_window_size(1000, 500)
 
         driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {
             "source": """
@@ -106,19 +151,32 @@ def handle_possible_blocking(driver, current_url):
         "//div[contains(text(), 'Checking your browser')]",
         "//div[contains(text(), 'Please verify you are a human')]",
         "//iframe[contains(@title, 'recaptcha')]",
-        "//div[contains(@class, 'cf-challenge')]"
+        "//div[contains(@class, 'cf-challenge')]",
+        "//div[@class='WZTU-wrap' and contains(text(), 'Security Check:')]",
+        "//div[@class='WZTU-wrap' and contains(text(), 'Please confirm that you are a real KAYAK user.')]",
+        "//div[@class='rc-anchor-logo-text' and contains(text(), 'reCAPTCHA')]",
+        "//div[@class='WZTU-failure' and contains(text(), 'You failed to prove that you are a real user. Please try again.')]",
+        "//h1[@id='title' and contains(text(), 'Please confirm that you are a real user')]"
     ]
 
     for indicator in blocking_indicators:
         try:
-            WebDriverWait(driver, 10).until(
-                EC.presence_of_element_located((By.XPATH, indicator)))
-            logger.info("⚠️ Human verification detected. Clearing cookies and retrying after 1 minute...")
-            driver.delete_all_cookies()
-            driver.execute_script("window.localStorage.clear();")
-            driver.execute_script("window.sessionStorage.clear();")
-            time.sleep(60)
-            driver.quit()
+            WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.XPATH, indicator)))
+            logger.warning("⚠️ Human verification detected. Replacing driver and retrying after 35 seconds...")
+
+            try:
+                driver.delete_all_cookies()
+                driver.execute_script("window.localStorage.clear();")
+                driver.execute_script("window.sessionStorage.clear();")
+            except Exception as e:
+                logger.debug(f"⚠️ Storage clear failed: {str(e).splitlines()[0]}")
+
+            try:
+                driver.quit()
+            except Exception as e:
+                logger.debug(f"⚠️ Suppressed quit error: {str(e).splitlines()[0]}")
+
+            time.sleep(35)
             driver = setup_driver()
             driver.get(current_url)
             human_like_interaction(driver)
@@ -127,6 +185,38 @@ def handle_possible_blocking(driver, current_url):
         except TimeoutException:
             continue
     return False, driver
+
+
+def handle_expired_or_blank(driver, current_url, progress_bar_xpath_visible):
+    try:
+        expired_elem = WebDriverWait(driver, 3).until(EC.presence_of_all_elements_located((By.CLASS_NAME, "xq41")))
+        if expired_elem:
+            logger.warning(f"[Thread {threading.get_ident()}] 🔁 Search expired. Refreshing tab...")
+            driver.refresh()
+            time.sleep(1)
+            WebDriverWait(driver, 2).until(EC.presence_of_element_located((By.XPATH, progress_bar_xpath_visible)))
+            logger.info(f"[Thread {threading.get_ident()}] 🔄 Refreshed tab and re-waited for page load.")
+            return driver
+    except TimeoutException:
+        pass
+
+    try:
+        if driver.current_url == "about:blank":
+            logger.warning(f"[Thread {threading.get_ident()}] ⚪ Detected about:blank. Replacing driver...")
+            try:
+                driver.quit()
+            except Exception as e:
+                logger.debug(f"⚠️ Suppressed quit error: {str(e).splitlines()[0]}")
+
+            time.sleep(2)
+            new_driver = setup_driver()
+            new_driver.get(current_url)
+            WebDriverWait(new_driver, 10).until(EC.presence_of_element_located((By.XPATH, progress_bar_xpath_visible)))
+            logger.info(f"[Thread {threading.get_ident()}] 🆕 New driver loaded with correct page.")
+            return new_driver
+    except Exception as e:
+        logger.warning(f"⚠️ Error handling about:blank: {str(e).splitlines()[0]}")
+    return driver
 
 
 def scrape_flight_data_interval(driver_queue, results_queue, search_params, start_date):
@@ -164,6 +254,8 @@ def scrape_flight_data_interval(driver_queue, results_queue, search_params, star
         if country in ['USA', 'Canada'] and departure_airport_optional and arrival_airport_optional:
             url = f"{base_url}/{departure_airport}-{arrival_airport}/{date_from_str}/{departure_airport_optional}-{arrival_airport_optional}/{date_to_str}/2adults?sort=price_a&fs=legdur=-{flight_hours * 60}{stops_param};virtualinterline=-virtualinterline;airportchange=-airportchange"
 
+        progress_bar_xpath_visible = "//div[@role='progressbar' and not(contains(@class, 'skp2-hidden')) and contains(@class, 'skp2')]"
+
         logger.info(f"[Thread {threading.get_ident()}] Accessing: {url}")
         driver.get(url)
         random_delay(1, 2)
@@ -172,20 +264,19 @@ def scrape_flight_data_interval(driver_queue, results_queue, search_params, star
         blocked, driver = handle_possible_blocking(driver, url)
         if blocked:
             logger.info(f"[Thread {threading.get_ident()}] 🔄 Retrying after block resolution for {date_from_str}...")
-            random_delay(18, 22)
-
-        load_timeout = random.randint(45, 48)
-        progress_bar_xpath_loaded = "//div[@class='skp2 skp2-hidden skp2-inlined' and @role='progressbar']"
+            random_delay(1, 2)
+            human_like_interaction(driver)
+            logger.info(f"[Thread {threading.get_ident()}] ✅ Using new driver after CAPTCHA recovery.")
 
         try:
-            WebDriverWait(driver, load_timeout).until(
-                EC.presence_of_element_located((By.XPATH, progress_bar_xpath_loaded)))
+            WebDriverWait(driver, 33).until(EC.invisibility_of_element_located((By.XPATH, progress_bar_xpath_visible)))
             logger.info(f"[Thread {threading.get_ident()}] ✅ Progress bar hidden - page loaded.")
-            time.sleep(1)
+
+            if driver.current_url == "about:blank" or "xq41" in driver.page_source:
+                driver = handle_expired_or_blank(driver, url, progress_bar_xpath_visible)
 
             try:
-                no_results = WebDriverWait(driver, 8).until(
-                    EC.presence_of_element_located((By.XPATH, "//div[@class='c8MCw-header-text' and contains(text(), 'No matching results found.')]")))
+                no_results = WebDriverWait(driver, 3).until(EC.presence_of_element_located((By.XPATH, "//div[@class='c8MCw-header-text' and contains(text(), 'No matching results found.')]")))
                 if no_results:
                     logger.info(f"[Thread {threading.get_ident()}] ⚠️ No flights available for {date_from_str}. Skipping.")
                     no_result_dates.add(start_date)
@@ -282,8 +373,43 @@ def scrape_flight_data_interval(driver_queue, results_queue, search_params, star
             driver.quit()
 
 
+@app.route('/otp', methods=['GET', 'POST'])
+def otp_login():
+    if request.method == 'POST':
+        action = request.form.get('action')
+
+        if action == 'generate':
+            email = request.form['email']
+            otp = generate_otp()
+            otp_store[email] = otp
+            if send_otp_email(email, otp):
+                session['otp_email'] = email
+                flash("✅ OTP sent successfully.")
+                return render_template('login.html', otp_sent=True)
+            else:
+                flash("❌ Failed to send OTP.")
+                return render_template('login.html', otp_sent=False)
+
+        elif action == 'verify':
+            email = session.get('otp_email')
+            entered_otp = request.form['otp']
+            if email and otp_store.get(email) == entered_otp:
+                session['verified'] = True
+                otp_store.pop(email, None)
+                flash("✅ OTP verified.")
+                return redirect('/')
+            else:
+                flash("❌ Invalid OTP.")
+                return render_template('login.html', otp_sent=True)
+
+    return render_template('login.html', otp_sent=False)
+
+
 @app.route('/', methods=['GET', 'POST'])
 def index():
+    if not session.get('verified'):
+        return redirect('/otp')
+
     usa_airports = ["JFK", "EWR", "BOS", "MIA", "MCO", "ORD", "IAH", "IAD", "DEN", "DTW", "PHL", "LAS", "LAX", "SFO", "ATL", "DFW", "SWF"]
     canada_airports = ["YYZ", "YVR", "YOW", "YUL", "YHZ", "YEG", "YYC"]
     selected_country = request.form.get('country')
@@ -342,6 +468,35 @@ def index():
         for thread in threads:
             thread.join()
 
+            while not results_queue.empty():
+                flight_data = results_queue.get()
+                if flight_data:
+                    all_flights.append(flight_data)
+
+            if all_flights:
+                df = pd.DataFrame(all_flights)
+                df['Date'] = pd.to_datetime(df['Date'], format='%d-%b-%y', errors='coerce')
+                df.dropna(subset=['Date'], inplace=True)
+                df.sort_values(by="Date", inplace=True)
+
+                partial_output_file = "partial_results.xlsx"
+
+                wb = Workbook()
+                ws = wb.active
+                thin_border = Border(left=Side(style='thin'), right=Side(style='thin'), top=Side(style='thin'), bottom=Side(style='thin'))
+                for r_idx, row in enumerate(dataframe_to_rows(df, header=True, index=False)):
+                    ws.append(row)
+                    for c_idx, cell in enumerate(ws[r_idx + 1]):
+                        cell.alignment = Alignment(horizontal='center')
+                        cell.border = thin_border
+                        if r_idx == 0:
+                            cell.font = Font(bold=True)
+                for cell in ws['A']:
+                    cell.number_format = 'DD-MMM-YY'
+
+                wb.save(partial_output_file)
+                latest_output_file["filename"] = partial_output_file
+
         while not results_queue.empty():
             flight_data = results_queue.get()
             if flight_data:
@@ -350,7 +505,7 @@ def index():
         while not driver_queue.empty():
             try:
                 driver = driver_queue.get()
-                # logger.info(f"[Thread {threading.get_ident()}] 🔁 Re-scraping for {start_date}")
+                # logger.info(f"[Thread {threading.get_ident()}] 🔁 Re-scraping for {retry_date}")
                 driver.quit()
             except Exception as e:
                 logger.warning(f"⚠️ Error quitting driver: {str(e).splitlines()[0]}")
@@ -360,6 +515,7 @@ def index():
         if all_flights:
             df = pd.DataFrame(all_flights)
             df['Date'] = pd.to_datetime(df['Date'], format='%d-%b-%y')
+            df.sort_values(by="Date", inplace=True)
             output_file = f"{departure_airport.upper()} - {arrival_airport.upper()}{f' x {departure_airport_optional.upper()}' if 'departure_airport_optional' in locals() and departure_airport_optional and 'arrival_airport_optional' in locals() and arrival_airport_optional else ''}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
 
             wb = Workbook()
@@ -379,6 +535,7 @@ def index():
                 cell.number_format = 'DD-MMM-YY'
 
             wb.save(output_file)
+            latest_output_file["filename"] = output_file
             logger.info("⏳ Waiting briefly to ensure all threads completed writing...")
             time.sleep(2)
 
@@ -415,7 +572,7 @@ def index():
                 threads = []
 
                 for retry_date in missing_dates:
-                    logger.info(f"[Thread {threading.get_ident()}] 🔁 Re-scraping for {start_date}")
+                    logger.info(f"[Thread {threading.get_ident()}] 🔁 Re-scraping for {retry_date}")
                     thread = threading.Thread(target=scrape_flight_data_interval, args=(driver_queue, results_queue, search_params, retry_date))
                     threads.append(thread)
                     thread.start()
@@ -431,6 +588,7 @@ def index():
                     retry_df = pd.DataFrame(retry_flights)
                     retry_df['Date'] = pd.to_datetime(retry_df['Date'], format='%d-%b-%y')
                     df = pd.concat([df, retry_df], ignore_index=True).drop_duplicates(subset=['Date'])
+                    df.sort_values(by="Date", inplace=True)
 
                     wb = Workbook()
                     ws = wb.active
@@ -444,6 +602,7 @@ def index():
                     for cell in ws['A']:
                         cell.number_format = 'DD-MMM-YY'
                     wb.save(output_file)
+                    latest_output_file["filename"] = output_file
                     logger.info(f"📦 File saved after re-scraping all dates: {output_file}")
                     while not driver_queue.empty():
                         try:
@@ -471,6 +630,12 @@ def download_file(filename):
         return send_file(filepath, as_attachment=True, download_name=filename)
     except FileNotFoundError:
         return "Error: File not found.", 404
+
+
+@app.route('/force-results')
+def force_results():
+    output_file = latest_output_file.get("filename")
+    return render_template('results.html', output_file=output_file)
 
 
 if __name__ == '__main__':

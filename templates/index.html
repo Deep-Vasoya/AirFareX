@@ -10,12 +10,13 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Julius+Sans+One&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Jost:ital,wght@0,100..900;1,100..900&family=Quicksand:wght@300..700&display=swap"
       rel="stylesheet"
     />
     <style>
       body {
-        font-family: Julius Sans One, sans-serif;
+        font-family: "Jost", sans-serif;
+        font-weight: 400;
         margin: 20px;
         background-color: #f4f4f4;
         color: #333;
@@ -37,7 +38,8 @@
       li,
       span,
       div {
-        font-family: Julius Sans One, sans-serif;
+        font-family: "Jost", sans-serif;
+        font-weight: 400;
       }
 
       .header-container {
@@ -70,10 +72,11 @@
       }
 
       label {
-        display: block;
+        display: flex;
         margin-bottom: 5px;
-        font-weight: bold;
+        font-weight: 500;
         color: #555;
+        font-size: larger;
       }
 
       input[type="text"],
@@ -86,11 +89,13 @@
         border: 1px solid #ddd;
         border-radius: 4px;
         box-sizing: border-box;
+        font-size: medium;
       }
 
       input[type="checkbox"],
       input[type="radio"] {
         margin-right: 5px;
+        font-size: large;
       }
 
       .country-select-container {
@@ -127,8 +132,25 @@
         width: 200px;
         margin: 20px auto 0;
         display: block;
-        font-size: 1em;
+        font-size: 1.3em;
         transition: background-color 0.3s ease;
+      }
+
+      button[type="reset"] {
+        position: absolute !important;
+        bottom: 20px;
+        right: 20px;
+        padding: 12px 24px;
+        background-color: red !important;
+        color: white !important;
+        font-weight: bold;
+        border: 2px solid black;
+        border-radius: 6px;
+        font-size: 1.3em;
+        z-index: 9999 !important;
+        display: block !important;
+        visibility: visible !important;
+        opacity: 1 !important;
       }
 
       button[type="submit"]:hover {
@@ -199,6 +221,7 @@
         background-color: #f8f8f8;
         color: #333;
         transition: background-color 0.3s ease;
+        font-size: medium;
       }
 
       .mode-button.active {
@@ -490,7 +513,7 @@
           name="num_tabs"
           value="5"
           min="1"
-          max="30"
+          max="15"
         />
       </div>
       <button type="submit">Scrape Flights</button>
@@ -509,6 +532,9 @@
         />
       </div>
       <p class="loading-text">Hold your horses, we’re chasing planes...</p>
+      <button type="reset" onclick="window.location.href='/force-results'">
+        STOP!
+      </button>
     </div>
   </body>
 </html>

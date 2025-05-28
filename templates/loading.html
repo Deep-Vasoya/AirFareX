@@ -7,13 +7,13 @@
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link
-      href="https://fonts.googleapis.com/css2?family=Julius+Sans+One&display=swap"
+      href="https://fonts.googleapis.com/css2?family=Jost:ital,wght@0,100..900;1,100..900&family=Quicksand:wght@300..700&display=swap"
       rel="stylesheet"
     />
     <style>
       body {
         margin: 0;
-        font-family: Julius Sans One, sans-serif;
+        font-family: "Jost", sans-serif;
         background-color: #f8f9fa;
         display: flex;
         justify-content: center;
@@ -33,6 +33,7 @@
         justify-content: center;
         align-items: center;
         flex-direction: column;
+        position: relative;
       }
 
       .animation-container {
@@ -59,13 +60,16 @@
     <div class="loading-overlay">
       <div class="animation-container">
         <img
-          src="/templates/static/loading_animation.gif"
+          src="{{ url_for('static', filename='loading_animation.gif') }}"
           alt="Loading..."
           class="loading-image"
           style="max-width: 100%; height: auto"
         />
       </div>
       <p class="loading-text">Hold your horses, we’re chasing planes...</p>
+      <button type="reset" onclick="window.location.href='/force-results'">
+        STOP!
+      </button>
     </div>
   </body>
 </html>
