@@ -269,7 +269,7 @@ def scrape_flight_data_interval(driver_queue, results_queue, search_params, star
             logger.info(f"[Thread {threading.get_ident()}] ✅ Using new driver after CAPTCHA recovery.")
 
         try:
-            WebDriverWait(driver, 33).until(EC.invisibility_of_element_located((By.XPATH, progress_bar_xpath_visible)))
+            WebDriverWait(driver, 35).until(EC.invisibility_of_element_located((By.XPATH, progress_bar_xpath_visible)))
             logger.info(f"[Thread {threading.get_ident()}] ✅ Progress bar hidden - page loaded.")
 
             if driver.current_url == "about:blank" or "xq41" in driver.page_source:
@@ -294,6 +294,8 @@ def scrape_flight_data_interval(driver_queue, results_queue, search_params, star
         except TimeoutException:
             logger.info(f"[Thread {threading.get_ident()}] ⚠️ Timeout waiting for progress bar to be hidden.")
             driver.quit()
+            driver = setup_driver()
+            driver_queue.put(driver)
             return
 
         for _ in range(2):
