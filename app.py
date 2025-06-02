@@ -40,8 +40,18 @@ def send_otp_email(email, otp):
     smtp_server = "smtp.gmail.com"
     port = 587
 
-    message = MIMEText(f"Your OTP for Kayak Scraper is: {otp}")
-    message["Subject"] = "Your OTP Code"
+    html_message = f"""
+    <html>
+        <body>
+            <p style="font-size: 18px;">
+                OTP for <strong>Deep</strong> is: {otp}
+            </p>
+        </body>
+    </html>
+    """
+
+    message = MIMEText(html_message, "html")
+    message["Subject"] = "KFS OTP"
     message["From"] = sender_email
     message["To"] = email
 
